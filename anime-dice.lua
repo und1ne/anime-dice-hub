@@ -337,6 +337,11 @@ tabBar.Position = UDim2.new(0, 0, 0, 38)
 tabBar.BackgroundColor3 = Color3.fromRGB(17, 22, 29)
 tabBar.BorderSizePixel = 0
 tabBar.Parent = win
+local tabPad = Instance.new("UIPadding", tabBar)
+tabPad.PaddingTop = UDim.new(0, 8)
+local tabLay = Instance.new("UIListLayout", tabBar)
+tabLay.SortOrder = Enum.SortOrder.LayoutOrder
+tabLay.Padding = UDim.new(0, 2)
 
 local content = Instance.new("Frame")
 content.Position = UDim2.new(0, 120, 0, 38)
@@ -346,15 +351,28 @@ content.Parent = win
 local tabs = {}
 local function makeTab(name)
     local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(1, 0, 0, 32)
+    btn.Size = UDim2.new(1, 0, 0, 34)
     btn.BackgroundTransparency = 1
     btn.Font = Enum.Font.Gotham
     btn.TextSize = 12
     btn.TextColor3 = Color3.fromRGB(148, 163, 184)
     btn.Text = name
     btn.TextXAlignment = Enum.TextXAlignment.Left
+    btn.LayoutOrder = #tabs + 1
     btn.Parent = tabBar
-    local pad = Instance.new("UIPadding", btn) pad.PaddingLeft = UDim.new(0, 14)
+    local pad = Instance.new("UIPadding", btn)
+    pad.PaddingLeft = UDim.new(0, 14)
+    pad.PaddingRight = UDim.new(0, 8)
+
+    local bar = Instance.new("Frame", btn)
+    bar.Name = "ActiveBar"
+    bar.Size = UDim2.new(0, 3, 0, 16)
+    bar.Position = UDim2.new(0, 0, 0.5, -8)
+    bar.BackgroundColor3 = Color3.fromRGB(56, 189, 248)
+    bar.BorderSizePixel = 0
+    bar.Visible = false
+    Instance.new("UICorner", bar).CornerRadius = UDim.new(1, 0)
+    btn.ActiveBar = bar
 
     local page = Instance.new("ScrollingFrame")
     page.Size = UDim2.new(1, 0, 1, 0)
@@ -380,6 +398,7 @@ local function selectTab(idx)
         local on = (i == idx)
         e.page.Visible = on
         e.btn.TextColor3 = on and Color3.fromRGB(56, 189, 248) or Color3.fromRGB(148, 163, 184)
+        if e.btn.ActiveBar then e.btn.ActiveBar.Visible = on end
     end
 end
 
