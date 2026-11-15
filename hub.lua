@@ -696,58 +696,118 @@ local function tryClipboard(text)
 end
 
 -- Upload dump ke paste service supaya bisa dibuka di HP/browser.
--- Coba beberapa endpoint, balikin URL atau nil+err.
+-- Balikin URL atau nil + detail error per-endpoint.
+local function getRequester()
+    if syn and type(syn.request) == "function" then return syn.request, "syn" end
+    if http and type(http.request) == "function" then return http.request, "http" end
+    if type(request) == "function" then return request, "request" end
+    if fluxus and type(fluxus.request) == "function" then return fluxus.request, "fluxus" end
+    if Krnl and type(Krnl.request) == "function" then return Krnl.request, "krnl" end
+    return nil, "none"
+end
+
 local function uploadText(text)
-    if not (syn and syn.request) and not (http and http.request) and not request then
-        return nil, "executor tidak punya http.request"
+    local req, reqName = getRequester()
+    if not req then
+        return nil, "executor tidak punya syn.request / http.request / request"
     end
 
-    local function req(opts)
-        if syn and syn.request then return syn.request(opts) end
-        if http and http.request then return http.request(opts) end
-        return request(opts)
+    local errs = {}
+
+    local function attempt(name, opts)
+        local ok, res = pcall(req, opts)
+        if not ok then
+            errs[#errs + 1] = name .. ": " .. tostring(res)
+            return nil
+        end
+        if not res then
+            errs[#errs + 1] = name .. ": nil response"
+            return nil
+        end
+        local code = res.StatusCode or res.status or res.Status
+        if code ~= 200 and code ~= 201 then
+            errs[#errs + 1] = name .. ": HTTP " .. tostring(code)
+            return nil
+        end
+        return tostring(res.Body or res.body or "")
     end
 
-    local body = HttpService:JSONEncode({ text = text })
-
-    local endpoints = {
-        { url = "https://api.paste.gg/v1/pastes", method = "POST",
-          headers = { ["Content-Type"] = "application/json" },
-          body = HttpService:JSONEncode({
-              name = "ad_dump",
-              visibility = "unlisted",
-              files = { { name = "dump.txt", content = { format = "text", value = text } } },
-          }),
-          parse = function(res)
-              local ok, d = pcall(HttpService.JSONDecode, HttpService, res.Body)
-              if ok and d and d.id then return "https://paste.gg/" .. d.id end
-          end },
-
-        { url = "https://dpaste.com/api/v2/", method = "POST",
-          headers = { ["Content-Type"] = "application/x-www-form-urlencoded" },
-          body = "content=" .. (text:gsub("[^%w%-%._~]", function(c)
-              return string.format("%%%02X", string.byte(c))
-          end)) .. "&syntax=text&expiry=2592000",
-          parse = function(res)
-              local b = tostring(res.Body or ""):gsub("%s+$", "")
-              if b:match("^https?://") then return b end
-          end },
-    }
-
-    for _, ep in ipairs(endpoints) do
-        local ok, res = pcall(req, {
-            Url = ep.url,
-            Method = ep.method,
-            Headers = ep.headers,
-            Body = ep.body,
+    -- 1. paste.rs — raw body = content, response = URL
+    do
+        local b = attempt("paste.rs", {
+            Url = "https://paste.rs/",
+            Method = "POST",
+            Headers = { ["Content-Type"] = "text/plain" },
+            Body = text,
         })
-        if ok and res and (res.StatusCode == 200 or res.StatusCode == 201) then
-            local url = ep.parse(res)
-            if url then return url end
+        if b then
+            b = b:gsub("%s+$", "")
+            if b:match("^https?://") then return b end
+            errs[#errs + 1] = "paste.rs: body tidak URL -> " .. b:sub(1, 60)
         end
     end
 
-    return nil, "semua endpoint gagal"
+    -- 2. dpaste.com — form-urlencoded, field 'content'
+    do
+        local enc = text:gsub("[^%w%-%._~]", function(c)
+            return string.format("%%%02X", string.byte(c))
+        end)
+        local b = attempt("dpaste", {
+            Url = "https://dpaste.com/api/v2/",
+            Method = "POST",
+            Headers = { ["Content-Type"] = "application/x-www-form-urlencoded" },
+            Body = "content=" .. enc .. "&syntax=text&expiry=2592000",
+        })
+        if b then
+            b = b:gsub("%s+$", "")
+            if b:match("^https?://") then return b end
+            errs[#errs + 1] = "dpaste: body tidak URL -> " .. b:sub(1, 60)
+        end
+    end
+
+    -- 3. paste.gg — JSON
+    do
+        local payload = HttpService:JSONEncode({
+            name = "ad_dump",
+            visibility = "unlisted",
+            files = { { name = "dump.txt", content = { format = "text", value = text } } },
+        })
+        local b = attempt("paste.gg", {
+            Url = "https://api.paste.gg/v1/pastes",
+            Method = "POST",
+            Headers = { ["Content-Type"] = "application/json" },
+            Body = payload,
+        })
+        if b then
+            local ok, d = pcall(HttpService.JSONDecode, HttpService, b)
+            if ok and type(d) == "table" and d.id then
+                return "https://paste.gg/" .. d.id
+            end
+            errs[#errs + 1] = "paste.gg: id tidak ada -> " .. b:sub(1, 80)
+        end
+    end
+
+    -- 4. 0x0.st — multipart-ish form
+    do
+        local boundary = "----ADBoundary" .. tostring(os.time())
+        local body = "--" .. boundary .. "\r\n"
+            .. 'Content-Disposition: form-data; name="file"; filename="dump.txt"\r\n'
+            .. "Content-Type: text/plain\r\n\r\n"
+            .. text .. "\r\n--" .. boundary .. "--\r\n"
+        local b = attempt("0x0.st", {
+            Url = "https://0x0.st",
+            Method = "POST",
+            Headers = { ["Content-Type"] = "multipart/form-data; boundary=" .. boundary },
+            Body = body,
+        })
+        if b then
+            b = b:gsub("%s+$", "")
+            if b:match("^https?://") then return b end
+            errs[#errs + 1] = "0x0.st: body tidak URL -> " .. b:sub(1, 60)
+        end
+    end
+
+    return nil, "requester=" .. reqName .. " | " .. table.concat(errs, " ; ")
 end
 
 local function renderPage()
@@ -914,23 +974,31 @@ local function showConsole(text)
 
         footBtn("UPLOAD", 232, 62, Color3.fromRGB(147, 51, 234), function()
             local joined = table.concat(readerLines, "\n")
-            notify("Upload...")
+            if reader then reader.PageLbl.Text = "UPLOAD..." end
             task.spawn(function()
                 local url, err = uploadText(joined)
                 if url then
-                    reader.PageLbl.Text = "URL: " .. url
-                    if tryClipboard(url) then
-                        notify("URL tersalin: " .. url)
-                    else
-                        notify("URL: " .. url)
-                    end
+                    getgenv().AD_LastDumpURL = url
+                    if reader then reader.PageLbl.Text = "OK: " .. url end
+                    tryClipboard(url)
+                    notify("URL: " .. url)
                 else
-                    notify("Upload gagal: " .. tostring(err))
+                    getgenv().AD_LastUploadErr = err
+                    if reader then reader.PageLbl.Text = "GAGAL: " .. tostring(err):sub(1, 40) end
+                    notify("Upload gagal — lihat header panel")
+                    print("[AD] upload error: " .. tostring(err))
                 end
             end)
         end)
 
-        footBtn(">>", 300, 40, Color3.fromRGB(56, 189, 248), function()
+        footBtn("ERR", 300, 40, Color3.fromRGB(120, 80, 30), function()
+            local e = getgenv().AD_LastUploadErr or "(belum ada percobaan upload)"
+            if reader then reader.PageLbl.Text = tostring(e):sub(1, 60) end
+            print("[AD] " .. tostring(e))
+            notify(tostring(e):sub(1, 90))
+        end)
+
+        footBtn(">>", 344, 40, Color3.fromRGB(56, 189, 248), function()
             readerIdx = readerIdx + 1
             renderPage()
         end)
