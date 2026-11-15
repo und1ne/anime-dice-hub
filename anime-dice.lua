@@ -47,22 +47,17 @@ local function fire(path, ...)
     return ok, err
 end
 
--- coba beberapa variasi argumen sampai salah satu lolos
-local function invokeAny(path, variants)
-    for _, args in ipairs(variants) do
-        local ok, res = invoke(path, table.unpack(args))
-        if ok then return true, res, args end
-    end
-    return false, "semua varian gagal: " .. path
+-- Satu panggilan saja, tidak brute-force.
+local function invokeAny(path, args)
+    return invoke(path, table.unpack(args or {}))
 end
 
-local function fireAny(path, variants)
-    for _, args in ipairs(variants) do
-        local ok = fire(path, table.unpack(args))
-        if ok then return true, args end
-    end
-    return false, "semua varian gagal: " .. path
+local function fireAny(path, args)
+    return fire(path, table.unpack(args or {}))
 end
+
+--[[ helper tombol GUI dihapus: firesignal adalah pola yang paling sering
+     ditandai anti-cheat. Semua aksi sekarang lewat remote langsung. ]]
 
 --------------------------------------------------------------- PATH TABLE
 
@@ -130,104 +125,65 @@ end
 
 local function low(s) return string.lower(tostring(s or "")) end
 
-local function pressBtn(pred)
-    local pg = LP:FindFirstChild("PlayerGui")
-    if not pg then return 0 end
-    local n = 0
-    for _, d in ipairs(pg:GetDescendants()) do
-        if d:IsA("TextButton") and (not pred or pred(d)) then
-            if firesignal then pcall(firesignal, d.MouseButton1Click) n = n + 1 end
-        end
-    end
-    return n
-end
-
-local function findBtnByPath(segments)
-    local pg = LP:FindFirstChild("PlayerGui")
-    if not pg then return nil end
-    for _, d in ipairs(pg:GetDescendants()) do
-        if d:IsA("TextButton") then
-            local full = d:GetFullName()
-            local all = true
-            for _, s in ipairs(segments) do
-                if not string.find(full, s, 1, true) then all = false break end
-            end
-            if all then return d end
-        end
-    end
-    return nil
-end
-
 --------------------------------------------------------------- ACTIONS
+-- Semua aksi = SATU panggilan remote. Tidak ada loop brute-force variasi
+-- argumen. Kalau server menolak, pesan errornya yang kita pakai, bukan
+-- menembak ulang dengan tebakan.
 
 local function doRoll(times)
-    times = times or 1
-    local ok, res = invokeAny(P.RollDice, { {}, { times }, { true }, { 1 } })
-    if not ok then S("RollDice gagal:", res) end
-    return ok
+    local ok, res = invoke(P.RollDice, times or 1)
+    S("RollDice", times or 1, "->", tostring(res):sub(1, 120))
+    return ok, res
 end
 
 local function doSellAll()
-    local ok1, r1 = invokeAny(P.SellInv, { {}, { true }, { "All" } })
-    local ok2, r2 = invokeAny(P.SellEquipped, { {}, { true } })
+    local ok1, r1 = invoke(P.SellInv)
+    local ok2, r2 = invoke(P.SellEquipped)
+    S("SellInv ->", tostring(r1):sub(1, 80), "| SellEquipped ->", tostring(r2):sub(1, 80))
     return ok1 or ok2
 end
 
 local function doLeafRoll(times)
-    times = times or 1
-    return invokeAny(P.LeafRoll, { {}, { times }, { true }, { 1 } })
+    local ok, res = invoke(P.LeafRoll, times or 1)
+    S("LeafRoll", times or 1, "->", tostring(res):sub(1, 120))
+    return ok, res
 end
 
 local function doCollect()
-    invokeAny(P.PlotCollect, { {}, { true } })
-    invokeAny(P.AppleCollect, { {}, { true } })
-end
-
-local function doQuests()
-    invokeAny(P.QuestClaim, { {}, { true }, { "All" } })
-    invokeAny(P.AutumnClaim, { {}, { true }, { "All" } })
-    invokeAny(P.AutumnBonus, { {}, { true } })
-end
-
-local function doFreeRewards()
-    invokeAny(P.DailyClaim, { {}, { true } })
-    invokeAny(P.OfflineClaim, { {}, { true } })
-    invokeAny(P.GroupClaim, { {}, { true } })
-end
-
--- Autumn event: coba remote Travel dulu, lalu tombol tower Autumn Forest
-local function goAutumn()
-    local ok, res = invokeAny(P.AutumnTravel, { {}, { true }, { "Autumn" }, { "autumn" } })
-    if ok then S("AutumnService.RF.Travel ok:", tostring(res)) return true end
-
-    local b = findBtnByPath({ "TurkeyTower", "Autumn Forest", "Play" })
-        or findBtnByPath({ "Autumn Forest" })
-    if b and firesignal then
-        pcall(firesignal, b.MouseButton1Click)
-        S("tekan tombol Autumn Forest")
-        return true
-    end
-
-    -- buka menu TurkeyTower dari HUD kalau belum kebuka
-    local hubBtn = findBtnByPath({ "HUD.Top.Hub" }) or findBtnByPath({ "HUD.Left.Index" })
-    if hubBtn and firesignal then
-        pcall(firesignal, hubBtn.MouseButton1Click)
-        task.wait(0.8)
-        local b2 = findBtnByPath({ "Autumn Forest", "Play" }) or findBtnByPath({ "TurkeyTower" })
-        if b2 then pcall(firesignal, b2.MouseButton1Click) return true end
-    end
-
-    S("gagal masuk autumn:", tostring(res))
-    return false
-end
-
-local function doRebirth()
-    return fireAny(P.Rebirth, { {}, { true } })
+    local ok1, r1 = invoke(P.PlotCollect)
+    local ok2, r2 = invoke(P.AppleCollect)
+    S("PlotCollect ->", tostring(r1):sub(1, 80), "| AppleCollect ->", tostring(r2):sub(1, 80))
+    return ok1 or ok2
 end
 
 local function doBuyUpgrades()
-    invokeAny(P.BuyUpgrade, { {}, { true } })
-    invokeAny(P.AppleTreeUp, { {}, { true } })
+    local ok, res = invoke(P.AppleUpgrade)
+    S("AppleUpgrade ->", tostring(res):sub(1, 120))
+    return ok, res
+end
+
+local function doQuests()
+    local ok, res = invoke(P.QuestClaim)
+    S("QuestClaim ->", tostring(res):sub(1, 120))
+    return ok, res
+end
+
+local function doFreeRewards()
+    local ok, res = invoke(P.DailyClaim)
+    S("DailyClaim ->", tostring(res):sub(1, 120))
+    return ok, res
+end
+
+local function doRebirth()
+    local ok, res = invoke(P.Rebirth)
+    S("Rebirth ->", tostring(res):sub(1, 120))
+    return ok, res
+end
+
+local function goAutumn()
+    local ok, res = invoke(P.AutumnTravel)
+    S("AutumnService.RF.Travel ->", tostring(res):sub(1, 200))
+    return ok, res
 end
 
 --------------------------------------------------------------- LOOPS
@@ -293,7 +249,18 @@ gui.Name = "ADHub"
 gui.ResetOnSpawn = false
 gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 gui.IgnoreGuiInset = true
-gui.Parent = game:GetService("CoreGui")
+gui.DisplayOrder = 999
+-- gethui() = protected container executor. Fallback CoreGui lalu PlayerGui.
+local function hookParent()
+    if gethui then
+        local ok, h = pcall(gethui)
+        if ok and h then return h end
+    end
+    local ok, cg = pcall(function() return game:GetService("CoreGui") end)
+    if ok and cg then return cg end
+    return LP:WaitForChild("PlayerGui")
+end
+gui.Parent = hookParent()
 getgenv().ADHub = gui
 
 local win = Instance.new("Frame")
@@ -646,15 +613,11 @@ for i, e in ipairs(tabs) do e.btn.MouseButton1Click:Connect(function() selectTab
 
 -- ROLL
 section(pRoll, "Dice")
-toggle(pRoll, "Auto Roll (server)", false, function(on)
-    fireAny(P.SetAutoRoll, { { on }, { on, true } })
-    if on then
-        setLoop("Auto Roll (server)", 1.2, function() doRoll() end)
-    end
+toggle(pRoll, "Server AutoRoll flag", false, function(on)
+    fireAny(P.SetAutoRoll, { on })
 end)
-toggle(pRoll, "Auto Sell", false, function(on)
-    fireAny(P.AutoSell, { { on }, { on, true } })
-    if on then setLoop("Auto Sell", 3, function() doSellAll() end) end
+toggle(pRoll, "Server AutoSell flag", false, function(on)
+    fireAny(P.AutoSell, { on })
 end)
 button(pRoll, "Roll x1", function() if doRoll(1) then notify("Roll sent") end end)
 button(pRoll, "Roll x10", function() if doRoll(10) then notify("Roll x10 sent") end end)
@@ -664,81 +627,95 @@ end)
 
 section(pRoll, "Other Rolls")
 button(pRoll, "Quirk Roll", function()
-    fireAny(P.QuirkRoll, { {}, { true } }) notify("Quirk roll")
+    fireAny(P.QuirkRoll) notify("Quirk roll")
 end)
 button(pRoll, "Trait Roll", function()
-    fireAny(P.TraitRoll, { {}, { true } }) notify("Trait roll")
+    fireAny(P.TraitRoll) notify("Trait roll")
 end)
 button(pRoll, "Grade Roll", function()
-    fireAny(P.GradeRoll, { {}, { true } }) notify("Grade roll")
+    fireAny(P.GradeRoll) notify("Grade roll")
 end)
 
 -- AUTUMN
 section(pAutumn, "Event")
 button(pAutumn, "MASUK AREA AUTUMN", function()
-    if goAutumn() then notify("Travel Autumn dikirim") else notify("Gagal masuk autumn") end
+    local ok, res = goAutumn()
+    notify(ok and ("Travel -> " .. tostring(res):sub(1, 50)) or ("Travel ERR: " .. tostring(res):sub(1, 50)))
 end)
 button(pAutumn, "Sync Autumn Quest", function()
-    local ok, res = invokeAny(P.AutumnSync, { {}, { true } })
-    S("AutumnSync:", tostring(res))
-    notify(ok and ("Sync ok: " .. tostring(res):sub(1, 60)) or "Sync gagal")
+    local ok, res = invoke(P.AutumnSync)
+    notify(ok and ("Sync -> " .. tostring(res):sub(1, 60)) or ("Sync ERR: " .. tostring(res):sub(1, 60)))
 end)
-button(pAutumn, "Claim Semua Autumn Quest", function()
-    invokeAny(P.AutumnClaim, { {}, { true }, { "All" } })
-    invokeAny(P.AutumnBonus, { {}, { true } })
-    notify("Claim autumn dikirim")
+button(pAutumn, "Claim Autumn Quest", function()
+    local ok, res = invoke(P.AutumnClaim)
+    notify(ok and ("Claim -> " .. tostring(res):sub(1, 60)) or ("Claim ERR: " .. tostring(res):sub(1, 60)))
 end)
-button(pAutumn, "Claim via GUI (firesignal)", function()
-    local n = pressBtn(function(b) return b:GetFullName():find("AutumnQuests", 1, true) ~= nil end)
-    notify("Tombol autumn ditekan: " .. n)
+button(pAutumn, "Claim Bonus Autumn", function()
+    local ok, res = invoke(P.AutumnBonus)
+    notify(ok and ("Bonus -> " .. tostring(res):sub(1, 60)) or ("Bonus ERR: " .. tostring(res):sub(1, 60)))
+end)
+button(pAutumn, "DIAG — tes semua remote autumn", function()
+    local paths = {
+        "AutumnService.RF.Travel", "AutumnQuestService.RF.Sync",
+        "AutumnQuestService.RF.Claim", "AutumnQuestService.RF.ClaimBonus",
+        "LeafDiceService.RF.Roll",
+    }
+    local lines = {}
+    for _, path in ipairs(paths) do
+        local r = remote(path)
+        if not r then
+            lines[#lines + 1] = path .. " = TIDAK ADA"
+        else
+            local ok, res = invoke(path)
+            lines[#lines + 1] = path .. " = " .. (ok and ("OK " .. tostring(res):sub(1, 80))
+                                                 or ("ERR " .. tostring(res):sub(1, 80)))
+        end
+        task.wait(0.4)
+    end
+    S(table.unpack(lines))
+    notify("DIAG selesai, cek console / tombol ERR")
 end)
 
 section(pAutumn, "Leaf Dice")
-toggle(pAutumn, "Auto Leaf Roll", false, function(on)
-    fireAny(P.LeafAutoSell, { { on }, { on, true } })
-    if on then
-        setLoop("Auto Leaf Roll", 1.5, function() doLeafRoll() end)
-    end
+toggle(pAutumn, "Leaf AutoSell flag", false, function(on)
+    fireAny(P.LeafAutoSell, { on })
 end)
 button(pAutumn, "Leaf Roll x1", function()
-    if doLeafRoll(1) then notify("Leaf roll") end
+    local ok, res = doLeafRoll(1)
+    notify(ok and ("Leaf x1 -> " .. tostring(res):sub(1, 50)) or "Leaf x1 gagal")
 end)
 button(pAutumn, "Leaf Roll x10", function()
-    if doLeafRoll(10) then notify("Leaf roll x10") end
-end)
-button(pAutumn, "Buka Menu LeafDice", function()
-    local b = findBtnByPath({ "HUD", "Hub" }) or findBtnByPath({ "HUD.Left.Index" })
-    if b and firesignal then pcall(firesignal, b.MouseButton1Click) end
-    notify("Cari menu LeafDice manual kalau gak kebuka")
+    local ok, res = doLeafRoll(10)
+    notify(ok and ("Leaf x10 -> " .. tostring(res):sub(1, 50)) or "Leaf x10 gagal")
 end)
 
 section(pAutumn, "Apple / Harvest")
-toggle(pAutumn, "Auto Collect Apples", false, function(on)
-    if on then setLoop("Auto Collect", 2, doCollect) end
+button(pAutumn, "Collect Apples (1x)", function()
+    doCollect() notify("Collect dikirim")
 end)
-toggle(pAutumn, "Auto Buy Apple Upgrade", false, function(on)
-    if on then setLoop("Auto Apple Up", 5, doBuyUpgrades) end
+button(pAutumn, "Buy Apple Upgrade (1x)", function()
+    doBuyUpgrades() notify("Upgrade dikirim")
 end)
 
 -- MONEY
 section(pMoney, "Passive")
 button(pMoney, "Collect Balance (plot)", function()
-    invokeAny(P.PlotCollect, { {}, { true } }) notify("Collect dikirim")
+    invokeAny(P.PlotCollect) notify("Collect dikirim")
 end)
 button(pMoney, "Equip Best Unit", function()
-    invokeAny(P.PlotEquipBest, { {}, { true } }) notify("Equip best")
+    invokeAny(P.PlotEquipBest) notify("Equip best")
 end)
 button(pMoney, "Equip Best Tower", function()
-    fireAny(P.EquipBestTower, { {}, { true } }) notify("Tower best")
+    fireAny(P.EquipBestTower) notify("Tower best")
 end)
-toggle(pMoney, "Auto Rebirth", false, function(on)
-    if on then setLoop("Auto Rebirth", 4, doRebirth) end
+button(pMoney, "Rebirth (1x)", function()
+    doRebirth() notify("Rebirth dikirim")
 end)
-toggle(pMoney, "Auto Quests (claim)", false, function(on)
-    if on then setLoop("Auto Quests", 6, doQuests) end
+button(pMoney, "Claim Quests (1x)", function()
+    doQuests() notify("Claim quests")
 end)
-toggle(pMoney, "Auto Free Rewards", false, function(on)
-    if on then setLoop("Auto Rewards", 10, doFreeRewards) end
+button(pMoney, "Claim Free Rewards (1x)", function()
+    doFreeRewards() notify("Claim rewards")
 end)
 
 -- MAIN
