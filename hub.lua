@@ -134,9 +134,6 @@ local function dumpAll(showUI)
     print(lastDump)
     if showUI and getgenv().AD_ShowConsole then
         getgenv().AD_ShowConsole(lastDump)
-    elseif showUI then
-        -- console belum siap (dipanggil sebelum UI), sementara taruh di clipboard
-        if setclipboard then pcall(setclipboard, lastDump) end
     end
     return lastDump
 end
@@ -669,32 +666,138 @@ do
     end)
 end
 
---------------------------------------------------------------- CONSOLE OVERLAY (mobile-safe)
+--------------------------------------------------------------- DUMP READER (mobile-safe, no clipboard needed)
 
-local console, consoleBox
+local reader, readerBox, readerIdx, readerLines = nil, nil, 1, {}
+local PER_PAGE = 6
+
+-- semua nama fungsi clipboard yang dipakai executor berbeda-beda
+local function tryClipboard(text)
+    local fns = {
+        rawget(getfenv(0), "setclipboard"),
+        rawget(getfenv(0), "toclipboard"),
+        rawget(getfenv(0), "set_clipboard"),
+        rawget(getfenv(0), "writeclipboard"),
+        rawget(getfenv(0), "Clipboard"),
+    }
+    if Clipboard and type(Clipboard) == "table" and type(Clipboard.set) == "function" then
+        table.insert(fns, function(t) Clipboard.set(t) end)
+    end
+    if syn and type(syn) == "table" and type(syn.write_clipboard) == "function" then
+        table.insert(fns, function(t) syn.write_clipboard(t) end)
+    end
+    for _, fn in ipairs(fns) do
+        if type(fn) == "function" then
+            local ok = pcall(fn, text)
+            if ok then return true end
+        end
+    end
+    return false
+end
+
+-- Upload dump ke paste service supaya bisa dibuka di HP/browser.
+-- Coba beberapa endpoint, balikin URL atau nil+err.
+local function uploadText(text)
+    if not (syn and syn.request) and not (http and http.request) and not request then
+        return nil, "executor tidak punya http.request"
+    end
+
+    local function req(opts)
+        if syn and syn.request then return syn.request(opts) end
+        if http and http.request then return http.request(opts) end
+        return request(opts)
+    end
+
+    local body = HttpService:JSONEncode({ text = text })
+
+    local endpoints = {
+        { url = "https://api.paste.gg/v1/pastes", method = "POST",
+          headers = { ["Content-Type"] = "application/json" },
+          body = HttpService:JSONEncode({
+              name = "ad_dump",
+              visibility = "unlisted",
+              files = { { name = "dump.txt", content = { format = "text", value = text } } },
+          }),
+          parse = function(res)
+              local ok, d = pcall(HttpService.JSONDecode, HttpService, res.Body)
+              if ok and d and d.id then return "https://paste.gg/" .. d.id end
+          end },
+
+        { url = "https://dpaste.com/api/v2/", method = "POST",
+          headers = { ["Content-Type"] = "application/x-www-form-urlencoded" },
+          body = "content=" .. (text:gsub("[^%w%-%._~]", function(c)
+              return string.format("%%%02X", string.byte(c))
+          end)) .. "&syntax=text&expiry=2592000",
+          parse = function(res)
+              local b = tostring(res.Body or ""):gsub("%s+$", "")
+              if b:match("^https?://") then return b end
+          end },
+    }
+
+    for _, ep in ipairs(endpoints) do
+        local ok, res = pcall(req, {
+            Url = ep.url,
+            Method = ep.method,
+            Headers = ep.headers,
+            Body = ep.body,
+        })
+        if ok and res and (res.StatusCode == 200 or res.StatusCode == 201) then
+            local url = ep.parse(res)
+            if url then return url end
+        end
+    end
+
+    return nil, "semua endpoint gagal"
+end
+
+local function renderPage()
+    if not readerBox then return end
+    local total = #readerLines
+    local pages = math.max(1, math.ceil(total / PER_PAGE))
+    readerIdx = math.clamp(readerIdx, 1, pages)
+    local a = (readerIdx - 1) * PER_PAGE + 1
+    local b = math.min(a + PER_PAGE - 1, total)
+
+    local out = {}
+    for i = a, b do
+        out[#out + 1] = readerLines[i]
+    end
+    readerBox.Text = table.concat(out, "\n")
+
+    if reader and reader:FindFirstChild("PageLbl") then
+        reader.PageLbl.Text = readerIdx .. "/" .. pages .. "  (" .. total .. " baris)"
+    end
+end
 
 local function showConsole(text)
-    if not console then
-        console = Instance.new("Frame")
-        console.Size = UDim2.new(0, 470, 0, 380)
-        console.Position = UDim2.new(0.5, -235, 0.5, -190)
-        console.BackgroundColor3 = Color3.fromRGB(10, 13, 18)
-        console.BorderSizePixel = 0
-        console.Visible = false
-        console.ZIndex = 50
-        console.Parent = gui
-        local cc = Instance.new("UICorner") cc.CornerRadius = UDim.new(0, 10) cc.Parent = console
-        local cs = Instance.new("UIStroke") cs.Color = Color3.fromRGB(56, 189, 248) cs.Parent = console
+    readerLines = {}
+    for line in string.gmatch(text or "", "[^\n]*") do
+        readerLines[#readerLines + 1] = line
+    end
+    if #readerLines == 0 then readerLines = { "(kosong)" } end
+
+    if not reader then
+        reader = Instance.new("Frame")
+        reader.Size = UDim2.new(0, 470, 0, 400)
+        reader.Position = UDim2.new(0.5, -235, 0.5, -200)
+        reader.BackgroundColor3 = Color3.fromRGB(10, 13, 18)
+        reader.BorderSizePixel = 0
+        reader.Visible = false
+        reader.ZIndex = 50
+        reader.Parent = gui
+        local cc = Instance.new("UICorner") cc.CornerRadius = UDim.new(0, 10) cc.Parent = reader
+        local cs = Instance.new("UIStroke") cs.Color = Color3.fromRGB(56, 189, 248) cs.Parent = reader
 
         local bar = Instance.new("Frame")
-        bar.Size = UDim2.new(1, 0, 0, 34)
+        bar.Size = UDim2.new(1, 0, 0, 36)
         bar.BackgroundColor3 = Color3.fromRGB(20, 26, 34)
         bar.BorderSizePixel = 0
         bar.ZIndex = 51
-        bar.Parent = console
+        bar.Parent = reader
         local bc = Instance.new("UICorner") bc.CornerRadius = UDim.new(0, 10) bc.Parent = bar
 
         local hdr = Instance.new("TextLabel")
+        hdr.Name = "PageLbl"
         hdr.Size = UDim2.new(1, -160, 1, 0)
         hdr.Position = UDim2.new(0, 10, 0, 0)
         hdr.BackgroundTransparency = 1
@@ -705,71 +808,137 @@ local function showConsole(text)
         hdr.Text = "DUMP"
         hdr.ZIndex = 52
         hdr.Parent = bar
+        reader.PageLbl = hdr
 
-        local function mkBtn(label, xoff, color, cb)
+        local function mkBtn(label, xoff, w, color, cb, parent)
             local b = Instance.new("TextButton")
-            b.Size = UDim2.new(0, 66, 0, 24)
-            b.Position = UDim2.new(1, xoff, 0.5, -12)
+            b.Size = UDim2.new(0, w, 0, 26)
+            b.Position = UDim2.new(1, xoff, 0.5, -13)
             b.BackgroundColor3 = color
             b.BorderSizePixel = 0
             b.Font = Enum.Font.GothamBold
-            b.TextSize = 11
+            b.TextSize = 12
             b.TextColor3 = Color3.fromRGB(240, 248, 255)
             b.Text = label
             b.ZIndex = 52
-            b.Parent = bar
+            b.Parent = parent
             local c = Instance.new("UICorner") c.CornerRadius = UDim.new(0, 5) c.Parent = b
             b.MouseButton1Click:Connect(cb)
             return b
         end
 
-        mkBtn("COPY", -146, Color3.fromRGB(37, 99, 235), function()
-            if setclipboard then
-                pcall(setclipboard, consoleBox.Text)
-                notify("Tersalin ke clipboard")
-            else
-                notify("Executor tidak punya setclipboard")
-            end
+        mkBtn("X", -34, 28, Color3.fromRGB(120, 40, 40), function()
+            reader.Visible = false
+        end, bar)
+
+        -- reader box: font besar, bisa di-select pakai jari
+        readerBox = Instance.new("TextBox")
+        readerBox.Name = "Box"
+        readerBox.Size = UDim2.new(1, -16, 1, -100)
+        readerBox.Position = UDim2.new(0, 8, 0, 42)
+        readerBox.BackgroundColor3 = Color3.fromRGB(6, 9, 14)
+        readerBox.BorderSizePixel = 0
+        readerBox.Font = Enum.Font.Code
+        readerBox.TextSize = 13
+        readerBox.TextColor3 = Color3.fromRGB(168, 214, 250)
+        readerBox.TextXAlignment = Enum.TextXAlignment.Left
+        readerBox.TextYAlignment = Enum.TextYAlignment.Top
+        readerBox.TextWrapped = true
+        readerBox.MultiLine = true
+        readerBox.ClearTextOnFocus = false
+        readerBox.TextEditable = true
+        readerBox.Text = ""
+        readerBox.ZIndex = 51
+        readerBox.Parent = reader
+        local tc = Instance.new("UICorner") tc.CornerRadius = UDim.new(0, 6) tc.Parent = readerBox
+        local tp = Instance.new("UIPadding")
+        tp.PaddingLeft = UDim.new(0, 6)
+        tp.PaddingTop = UDim.new(0, 6)
+        tp.Parent = readerBox
+
+        local foot = Instance.new("Frame")
+        foot.Size = UDim2.new(1, -16, 0, 40)
+        foot.Position = UDim2.new(0, 8, 1, -48)
+        foot.BackgroundTransparency = 1
+        foot.ZIndex = 51
+        foot.Parent = reader
+
+        local function footBtn(label, x, w, color, cb)
+            local b = Instance.new("TextButton")
+            b.Size = UDim2.new(0, w, 1, 0)
+            b.Position = UDim2.new(0, x, 0, 0)
+            b.BackgroundColor3 = color
+            b.BorderSizePixel = 0
+            b.Font = Enum.Font.GothamBold
+            b.TextSize = 12
+            b.TextColor3 = Color3.fromRGB(240, 248, 255)
+            b.Text = label
+            b.ZIndex = 52
+            b.Parent = foot
+            local c = Instance.new("UICorner") c.CornerRadius = UDim.new(0, 6) c.Parent = b
+            b.MouseButton1Click:Connect(cb)
+            return b
+        end
+
+        footBtn("<<", 0, 40, Color3.fromRGB(45, 55, 70), function()
+            readerIdx = readerIdx - 1
+            renderPage()
         end)
 
-        mkBtn("SAVE", -74, Color3.fromRGB(22, 101, 52), function()
+        footBtn("SELANG", 46, 56, Color3.fromRGB(45, 55, 70), function()
+            -- blok semua supaya bisa di-copy manual via menu sistem
+            readerBox:CaptureFocus()
+            readerBox.CursorPosition = 1
+            readerBox.SelectionStart = 0
+            notify("Tekan lama teks → Select All → Copy")
+        end)
+
+        footBtn("SAVE", 108, 56, Color3.fromRGB(22, 101, 52), function()
+            local joined = table.concat(readerLines, "\n")
             if writefile then
-                pcall(writefile, "ad_dump.txt", consoleBox.Text)
-                notify("Tersimpan: ad_dump.txt")
+                local ok = pcall(writefile, "ad_dump.txt", joined)
+                notify(ok and "Tersimpan: ad_dump.txt" or "writefile gagal")
             else
                 notify("Executor tidak punya writefile")
             end
         end)
 
-        mkBtn("X", -8, Color3.fromRGB(120, 40, 40), function()
-            console.Visible = false
+        footBtn("COPY", 170, 56, Color3.fromRGB(37, 99, 235), function()
+            local joined = table.concat(readerLines, "\n")
+            if tryClipboard(joined) then
+                notify("Tersalin (" .. #joined .. " char)")
+            else
+                notify("Clipboard tidak tersedia — pakai SAVE")
+            end
         end)
 
-        consoleBox = Instance.new("TextBox")
-        consoleBox.Size = UDim2.new(1, -16, 1, -46)
-        consoleBox.Position = UDim2.new(0, 8, 0, 40)
-        consoleBox.BackgroundColor3 = Color3.fromRGB(6, 9, 14)
-        consoleBox.BorderSizePixel = 0
-        consoleBox.Font = Enum.Font.Code
-        consoleBox.TextSize = 11
-        consoleBox.TextColor3 = Color3.fromRGB(148, 200, 240)
-        consoleBox.TextXAlignment = Enum.TextXAlignment.Left
-        consoleBox.TextYAlignment = Enum.TextYAlignment.Top
-        consoleBox.TextWrapped = false
-        consoleBox.MultiLine = true
-        consoleBox.ClearTextOnFocus = false
-        consoleBox.TextEditable = true
-        consoleBox.Text = ""
-        consoleBox.ZIndex = 51
-        consoleBox.Parent = console
-        local tc = Instance.new("UICorner") tc.CornerRadius = UDim.new(0, 6) tc.Parent = consoleBox
-        local tp = Instance.new("UIPadding")
-        tp.PaddingLeft = UDim.new(0, 6) tp.PaddingTop = UDim.new(0, 6)
-        tp.Parent = consoleBox
+        footBtn("UPLOAD", 232, 62, Color3.fromRGB(147, 51, 234), function()
+            local joined = table.concat(readerLines, "\n")
+            notify("Upload...")
+            task.spawn(function()
+                local url, err = uploadText(joined)
+                if url then
+                    reader.PageLbl.Text = "URL: " .. url
+                    if tryClipboard(url) then
+                        notify("URL tersalin: " .. url)
+                    else
+                        notify("URL: " .. url)
+                    end
+                else
+                    notify("Upload gagal: " .. tostring(err))
+                end
+            end)
+        end)
+
+        footBtn(">>", 300, 40, Color3.fromRGB(56, 189, 248), function()
+            readerIdx = readerIdx + 1
+            renderPage()
+        end)
     end
 
-    consoleBox.Text = text or ""
-    console.Visible = true
+    readerIdx = 1
+    renderPage()
+    reader.Visible = true
 end
 
 getgenv().AD_ShowConsole = showConsole
@@ -787,10 +956,11 @@ local function fitScreen()
     tabBar.Size = UDim2.new(0, math.floor(w * 0.30), 1, -38)
     content.Size = UDim2.new(1, -math.floor(w * 0.30), 1, -38)
     content.Position = UDim2.new(0, math.floor(w * 0.30), 0, 38)
-    if console then
-        console.Size = UDim2.new(0, math.min(470, vp.X - 16), 0, math.min(380, vp.Y - 16))
-        console.Position = UDim2.new(0.5, -math.min(470, vp.X - 16) / 2,
-                                     0.5, -math.min(380, vp.Y - 16) / 2)
+    if reader then
+        local rw = math.min(470, vp.X - 16)
+        local rh = math.min(400, vp.Y - 16)
+        reader.Size = UDim2.new(0, rw, 0, rh)
+        reader.Position = UDim2.new(0.5, -rw / 2, 0.5, -rh / 2)
     end
 end
 
@@ -930,11 +1100,21 @@ end)
 section(pMisc, "Diagnostics")
 button(pMisc, "DUMP (panel — no F9)", function()
     dumpAll(true)
-    notify("Dump dibuka — tekan COPY")
+    notify("Dump dibuka")
 end)
-button(pMisc, "DUMP (print ke console)", function()
+button(pMisc, "DUMP + UPLOAD (dapat URL)", function()
     dumpAll(false)
-    notify("Dump di-print")
+    notify("Upload...")
+    task.spawn(function()
+        local url, err = uploadText(getgenv().AD_DumpText or "")
+        if url then
+            getgenv().AD_LastDumpURL = url
+            notify("URL: " .. url)
+            tryClipboard(url)
+        else
+            notify("Upload gagal: " .. tostring(err))
+        end
+    end)
 end)
 section(pMisc, "Network")
 button(pMisc, "Server Hop", function()
