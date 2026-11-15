@@ -66,9 +66,19 @@ end
 
 --------------------------------------------------------------- DUMPER
 
-local function dumpAll()
-    log("===== DUMP START =====")
-    log("PlaceId:", game.PlaceId, "JobId:", game.JobId)
+-- Balikin dump sebagai string. Gak butuh console/F9.
+local function buildDump()
+    local out = {}
+    local function put(s) out[#out + 1] = s end
+
+    put("===== DUMP START =====")
+    put("PlaceId: " .. tostring(game.PlaceId) .. "  JobId: " .. tostring(game.JobId))
+    put("Executor: " .. tostring((identifyexecutor and identifyexecutor()) or "?"))
+    put("firesignal=" .. tostring(firesignal ~= nil)
+        .. " prompt=" .. tostring(fireproximityprompt ~= nil)
+        .. " clickdet=" .. tostring(fireclickdetector ~= nil)
+        .. " clipboard=" .. tostring(setclipboard ~= nil)
+        .. " writefile=" .. tostring(writefile ~= nil))
 
     local remotes, prompts, clicks = {}, {}, {}
 
@@ -80,12 +90,12 @@ local function dumpAll()
                 local cls = d.ClassName
                 if cls == "RemoteEvent" or cls == "RemoteFunction"
                    or cls == "UnreliableRemoteEvent" then
-                    table.insert(remotes, cls .. "  " .. d:GetFullName())
+                    remotes[#remotes + 1] = cls .. "  " .. d:GetFullName()
                 elseif cls == "ProximityPrompt" then
-                    table.insert(prompts, "ProximityPrompt  " .. d:GetFullName()
-                        .. "  action=" .. tostring(d.ActionText))
+                    prompts[#prompts + 1] = "ProximityPrompt  " .. d:GetFullName()
+                        .. "  action=" .. tostring(d.ActionText)
                 elseif cls == "ClickDetector" then
-                    table.insert(clicks, "ClickDetector  " .. d:GetFullName())
+                    clicks[#clicks + 1] = "ClickDetector  " .. d:GetFullName()
                 end
             end
         end
@@ -93,27 +103,44 @@ local function dumpAll()
 
     table.sort(remotes) table.sort(prompts) table.sort(clicks)
 
-    log("--- REMOTES (" .. #remotes .. ") ---")
-    for _, l in ipairs(remotes) do log(l) end
-    log("--- PROMPTS (" .. #prompts .. ") ---")
-    for _, l in ipairs(prompts) do log(l) end
-    log("--- CLICKDETECTORS (" .. #clicks .. ") ---")
-    for _, l in ipairs(clicks) do log(l) end
+    put("--- REMOTES (" .. #remotes .. ") ---")
+    for _, l in ipairs(remotes) do put(l) end
+    put("--- PROMPTS (" .. #prompts .. ") ---")
+    for _, l in ipairs(prompts) do put(l) end
+    put("--- CLICKDETECTORS (" .. #clicks .. ") ---")
+    for _, l in ipairs(clicks) do put(l) end
 
     local pg = LP:FindFirstChild("PlayerGui")
     if pg then
-        log("--- GUI BUTTONS ---")
+        local btns = {}
         for _, d in ipairs(pg:GetDescendants()) do
             if d:IsA("TextButton") and d.Visible and low(d.Text) ~= "" then
-                log("BUTTON  " .. d:GetFullName() .. "  [" .. tostring(d.Text) .. "]")
+                btns[#btns + 1] = "BUTTON  " .. d:GetFullName() .. "  [" .. tostring(d.Text) .. "]"
             end
         end
+        table.sort(btns)
+        put("--- GUI BUTTONS (" .. #btns .. ") ---")
+        for _, l in ipairs(btns) do put(l) end
     end
 
-    log("===== DUMP END =====")
-    log("Copy seluruh blok di atas, kirim ke rat.")
+    put("===== DUMP END =====")
+    return table.concat(out, "\n")
 end
-getgenv().AD_Dump = dumpAll
+
+local lastDump = ""
+local function dumpAll(showUI)
+    lastDump = buildDump()
+    getgenv().AD_DumpText = lastDump
+    print(lastDump)
+    if showUI and getgenv().AD_ShowConsole then
+        getgenv().AD_ShowConsole(lastDump)
+    elseif showUI then
+        -- console belum siap (dipanggil sebelum UI), sementara taruh di clipboard
+        if setclipboard then pcall(setclipboard, lastDump) end
+    end
+    return lastDump
+end
+getgenv().AD_Dump = function() return dumpAll(true) end
 
 --------------------------------------------------------------- ENGINES
 
@@ -229,12 +256,12 @@ local function setFly(on)
             local cam = Workspace.CurrentCamera
             local dir = Vector3.zero
             local speed = Flags["Fly Speed"] or 60
-            if UserInputService:IsKeyDown(Enum.KeyCode.W) then dir += cam.CFrame.LookVector end
-            if UserInputService:IsKeyDown(Enum.KeyCode.S) then dir -= cam.CFrame.LookVector end
-            if UserInputService:IsKeyDown(Enum.KeyCode.A) then dir -= cam.CFrame.RightVector end
-            if UserInputService:IsKeyDown(Enum.KeyCode.D) then dir += cam.CFrame.RightVector end
-            if UserInputService:IsKeyDown(Enum.KeyCode.Space) then dir += Vector3.yAxis end
-            if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then dir -= Vector3.yAxis end
+            if UserInputService:IsKeyDown(Enum.KeyCode.W) then dir = dir + cam.CFrame.LookVector end
+            if UserInputService:IsKeyDown(Enum.KeyCode.S) then dir = dir - cam.CFrame.LookVector end
+            if UserInputService:IsKeyDown(Enum.KeyCode.A) then dir = dir - cam.CFrame.RightVector end
+            if UserInputService:IsKeyDown(Enum.KeyCode.D) then dir = dir + cam.CFrame.RightVector end
+            if UserInputService:IsKeyDown(Enum.KeyCode.Space) then dir = dir + Vector3.yAxis end
+            if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then dir = dir - Vector3.yAxis end
             if dir.Magnitude > 0 then dir = dir.Unit end
             flyBV.Velocity = dir * speed
             flyBG.CFrame = cam.CFrame
@@ -621,7 +648,8 @@ end
 do
     local dragging, dragStart, startPos
     top.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+           or input.UserInputType == Enum.UserInputType.Touch then
             dragging = true
             dragStart = input.Position
             startPos = win.Position
@@ -631,13 +659,147 @@ do
         end
     end)
     win.InputChanged:Connect(function(input)
-        if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement
+           or input.UserInputType == Enum.UserInputType.Touch) then
             local d = input.Position - dragStart
             win.Position = UDim2.new(
                 startPos.X.Scale, startPos.X.Offset + d.X,
                 startPos.Y.Scale, startPos.Y.Offset + d.Y)
         end
     end)
+end
+
+--------------------------------------------------------------- CONSOLE OVERLAY (mobile-safe)
+
+local console, consoleBox
+
+local function showConsole(text)
+    if not console then
+        console = Instance.new("Frame")
+        console.Size = UDim2.new(0, 470, 0, 380)
+        console.Position = UDim2.new(0.5, -235, 0.5, -190)
+        console.BackgroundColor3 = Color3.fromRGB(10, 13, 18)
+        console.BorderSizePixel = 0
+        console.Visible = false
+        console.ZIndex = 50
+        console.Parent = gui
+        local cc = Instance.new("UICorner") cc.CornerRadius = UDim.new(0, 10) cc.Parent = console
+        local cs = Instance.new("UIStroke") cs.Color = Color3.fromRGB(56, 189, 248) cs.Parent = console
+
+        local bar = Instance.new("Frame")
+        bar.Size = UDim2.new(1, 0, 0, 34)
+        bar.BackgroundColor3 = Color3.fromRGB(20, 26, 34)
+        bar.BorderSizePixel = 0
+        bar.ZIndex = 51
+        bar.Parent = console
+        local bc = Instance.new("UICorner") bc.CornerRadius = UDim.new(0, 10) bc.Parent = bar
+
+        local hdr = Instance.new("TextLabel")
+        hdr.Size = UDim2.new(1, -160, 1, 0)
+        hdr.Position = UDim2.new(0, 10, 0, 0)
+        hdr.BackgroundTransparency = 1
+        hdr.Font = Enum.Font.GothamBold
+        hdr.TextSize = 12
+        hdr.TextColor3 = Color3.fromRGB(56, 189, 248)
+        hdr.TextXAlignment = Enum.TextXAlignment.Left
+        hdr.Text = "DUMP"
+        hdr.ZIndex = 52
+        hdr.Parent = bar
+
+        local function mkBtn(label, xoff, color, cb)
+            local b = Instance.new("TextButton")
+            b.Size = UDim2.new(0, 66, 0, 24)
+            b.Position = UDim2.new(1, xoff, 0.5, -12)
+            b.BackgroundColor3 = color
+            b.BorderSizePixel = 0
+            b.Font = Enum.Font.GothamBold
+            b.TextSize = 11
+            b.TextColor3 = Color3.fromRGB(240, 248, 255)
+            b.Text = label
+            b.ZIndex = 52
+            b.Parent = bar
+            local c = Instance.new("UICorner") c.CornerRadius = UDim.new(0, 5) c.Parent = b
+            b.MouseButton1Click:Connect(cb)
+            return b
+        end
+
+        mkBtn("COPY", -146, Color3.fromRGB(37, 99, 235), function()
+            if setclipboard then
+                pcall(setclipboard, consoleBox.Text)
+                notify("Tersalin ke clipboard")
+            else
+                notify("Executor tidak punya setclipboard")
+            end
+        end)
+
+        mkBtn("SAVE", -74, Color3.fromRGB(22, 101, 52), function()
+            if writefile then
+                pcall(writefile, "ad_dump.txt", consoleBox.Text)
+                notify("Tersimpan: ad_dump.txt")
+            else
+                notify("Executor tidak punya writefile")
+            end
+        end)
+
+        mkBtn("X", -8, Color3.fromRGB(120, 40, 40), function()
+            console.Visible = false
+        end)
+
+        consoleBox = Instance.new("TextBox")
+        consoleBox.Size = UDim2.new(1, -16, 1, -46)
+        consoleBox.Position = UDim2.new(0, 8, 0, 40)
+        consoleBox.BackgroundColor3 = Color3.fromRGB(6, 9, 14)
+        consoleBox.BorderSizePixel = 0
+        consoleBox.Font = Enum.Font.Code
+        consoleBox.TextSize = 11
+        consoleBox.TextColor3 = Color3.fromRGB(148, 200, 240)
+        consoleBox.TextXAlignment = Enum.TextXAlignment.Left
+        consoleBox.TextYAlignment = Enum.TextYAlignment.Top
+        consoleBox.TextWrapped = false
+        consoleBox.MultiLine = true
+        consoleBox.ClearTextOnFocus = false
+        consoleBox.TextEditable = true
+        consoleBox.Text = ""
+        consoleBox.ZIndex = 51
+        consoleBox.Parent = console
+        local tc = Instance.new("UICorner") tc.CornerRadius = UDim.new(0, 6) tc.Parent = consoleBox
+        local tp = Instance.new("UIPadding")
+        tp.PaddingLeft = UDim.new(0, 6) tp.PaddingTop = UDim.new(0, 6)
+        tp.Parent = consoleBox
+    end
+
+    consoleBox.Text = text or ""
+    console.Visible = true
+end
+
+getgenv().AD_ShowConsole = showConsole
+
+--------------------------------------------------------------- RESPONSIVE (mobile)
+
+local function fitScreen()
+    local cam = Workspace.CurrentCamera
+    if not cam then return end
+    local vp = cam.ViewportSize
+    local w = math.min(470, vp.X - 24)
+    local h = math.min(350, vp.Y - 24)
+    win.Size = UDim2.new(0, w, 0, h)
+    win.Position = UDim2.new(0.5, -w / 2, 0.5, -h / 2)
+    tabBar.Size = UDim2.new(0, math.floor(w * 0.30), 1, -38)
+    content.Size = UDim2.new(1, -math.floor(w * 0.30), 1, -38)
+    content.Position = UDim2.new(0, math.floor(w * 0.30), 0, 38)
+    if console then
+        console.Size = UDim2.new(0, math.min(470, vp.X - 16), 0, math.min(380, vp.Y - 16))
+        console.Position = UDim2.new(0.5, -math.min(470, vp.X - 16) / 2,
+                                     0.5, -math.min(380, vp.Y - 16) / 2)
+    end
+end
+
+fitScreen()
+do
+    local cam = Workspace.CurrentCamera
+    if cam then
+        track(cam:GetPropertyChangedSignal("ViewportSize"):Connect(fitScreen))
+    end
 end
 
 closeBtn.MouseButton1Click:Connect(function() gui.Enabled = not gui.Enabled end)
@@ -766,9 +928,13 @@ end)
 
 -- MISC
 section(pMisc, "Diagnostics")
-button(pMisc, "DUMP REMOTE / BUTTON", function()
-    dumpAll()
-    notify("Dump ke console (F9)")
+button(pMisc, "DUMP (panel — no F9)", function()
+    dumpAll(true)
+    notify("Dump dibuka — tekan COPY")
+end)
+button(pMisc, "DUMP (print ke console)", function()
+    dumpAll(false)
+    notify("Dump di-print")
 end)
 section(pMisc, "Network")
 button(pMisc, "Server Hop", function()
