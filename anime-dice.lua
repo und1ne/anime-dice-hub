@@ -301,8 +301,12 @@ win.BackgroundColor3 = Color3.fromRGB(14, 18, 24)
 win.BorderSizePixel = 0
 win.ClipsDescendants = true
 win.Parent = gui
-Instance.new("UICorner", win).CornerRadius = UDim.new(0, 10)
-local ws = Instance.new("UIStroke", win) ws.Color = Color3.fromRGB(45, 55, 70)
+local _uicorner = Instance.new("UICorner")
+_uicorner.CornerRadius = UDim.new(0, 10)
+_uicorner.Parent = win
+local ws = Instance.new("UIStroke")
+ws.Color = Color3.fromRGB(45, 55, 70)
+ws.Parent = win
 
 local top = Instance.new("Frame")
 top.Size = UDim2.new(1, 0, 0, 38)
@@ -337,11 +341,13 @@ tabBar.Position = UDim2.new(0, 0, 0, 38)
 tabBar.BackgroundColor3 = Color3.fromRGB(17, 22, 29)
 tabBar.BorderSizePixel = 0
 tabBar.Parent = win
-local tabPad = Instance.new("UIPadding", tabBar)
+local tabPad = Instance.new("UIPadding")
 tabPad.PaddingTop = UDim.new(0, 8)
-local tabLay = Instance.new("UIListLayout", tabBar)
+tabPad.Parent = tabBar
+local tabLay = Instance.new("UIListLayout")
 tabLay.SortOrder = Enum.SortOrder.LayoutOrder
 tabLay.Padding = UDim.new(0, 2)
+tabLay.Parent = tabBar
 
 local content = Instance.new("Frame")
 content.Position = UDim2.new(0, 120, 0, 38)
@@ -359,20 +365,26 @@ local function makeTab(name)
     btn.Text = name
     btn.TextXAlignment = Enum.TextXAlignment.Left
     btn.LayoutOrder = #tabs + 1
-    btn.Parent = tabBar
-    local pad = Instance.new("UIPadding", btn)
+
+    local pad = Instance.new("UIPadding")
     pad.PaddingLeft = UDim.new(0, 14)
     pad.PaddingRight = UDim.new(0, 8)
+    pad.Parent = btn
 
-    local bar = Instance.new("Frame", btn)
+    local bar = Instance.new("Frame")
     bar.Name = "ActiveBar"
     bar.Size = UDim2.new(0, 3, 0, 16)
     bar.Position = UDim2.new(0, 0, 0.5, -8)
     bar.BackgroundColor3 = Color3.fromRGB(56, 189, 248)
     bar.BorderSizePixel = 0
     bar.Visible = false
-    Instance.new("UICorner", bar).CornerRadius = UDim.new(1, 0)
-    btn.ActiveBar = bar
+    bar.Parent = btn
+
+    local bc = Instance.new("UICorner")
+    bc.CornerRadius = UDim.new(1, 0)
+    bc.Parent = bar
+
+    btn.Parent = tabBar
 
     local page = Instance.new("ScrollingFrame")
     page.Size = UDim2.new(1, 0, 1, 0)
@@ -383,11 +395,18 @@ local function makeTab(name)
     page.AutomaticCanvasSize = Enum.AutomaticSize.Y
     page.Visible = false
     page.Parent = content
-    local pp = Instance.new("UIPadding", page)
-    pp.PaddingLeft = UDim.new(0, 14) pp.PaddingRight = UDim.new(0, 14)
-    pp.PaddingTop = UDim.new(0, 10) pp.PaddingBottom = UDim.new(0, 14)
-    local lay = Instance.new("UIListLayout", page)
-    lay.SortOrder = Enum.SortOrder.LayoutOrder lay.Padding = UDim.new(0, 6)
+
+    local pp = Instance.new("UIPadding")
+    pp.PaddingLeft = UDim.new(0, 14)
+    pp.PaddingRight = UDim.new(0, 14)
+    pp.PaddingTop = UDim.new(0, 10)
+    pp.PaddingBottom = UDim.new(0, 14)
+    pp.Parent = page
+
+    local lay = Instance.new("UIListLayout")
+    lay.SortOrder = Enum.SortOrder.LayoutOrder
+    lay.Padding = UDim.new(0, 6)
+    lay.Parent = page
 
     tabs[#tabs + 1] = { btn = btn, page = page }
     return page
@@ -398,7 +417,8 @@ local function selectTab(idx)
         local on = (i == idx)
         e.page.Visible = on
         e.btn.TextColor3 = on and Color3.fromRGB(56, 189, 248) or Color3.fromRGB(148, 163, 184)
-        if e.btn.ActiveBar then e.btn.ActiveBar.Visible = on end
+        local bar = e.btn:FindFirstChild("ActiveBar")
+        if bar then bar.Visible = on end
     end
 end
 
@@ -438,7 +458,9 @@ local function toggle(parent, label, default, cb)
     pill.Text = ""
     pill.AutoButtonColor = false
     pill.Parent = row
-    Instance.new("UICorner", pill).CornerRadius = UDim.new(1, 0)
+    local _uicorner = Instance.new("UICorner")
+    _uicorner.CornerRadius = UDim.new(1, 0)
+    _uicorner.Parent = pill
 
     local knob = Instance.new("Frame")
     knob.Size = UDim2.new(0, 14, 0, 14)
@@ -446,7 +468,9 @@ local function toggle(parent, label, default, cb)
     knob.BackgroundColor3 = Color3.fromRGB(248, 250, 252)
     knob.BorderSizePixel = 0
     knob.Parent = pill
-    Instance.new("UICorner", knob).CornerRadius = UDim.new(1, 0)
+    local _uicorner = Instance.new("UICorner")
+    _uicorner.CornerRadius = UDim.new(1, 0)
+    _uicorner.Parent = knob
 
     local function render()
         TweenService:Create(pill, TweenInfo.new(0.15), {
@@ -482,14 +506,18 @@ local function slider(parent, label, min, max, default, cb)
     tr.BackgroundColor3 = Color3.fromRGB(35, 43, 55)
     tr.BorderSizePixel = 0
     tr.Parent = row
-    Instance.new("UICorner", tr).CornerRadius = UDim.new(1, 0)
+    local _uicorner = Instance.new("UICorner")
+    _uicorner.CornerRadius = UDim.new(1, 0)
+    _uicorner.Parent = tr
 
     local fill = Instance.new("Frame")
     fill.Size = UDim2.new(0, 0, 1, 0)
     fill.BackgroundColor3 = Color3.fromRGB(56, 189, 248)
     fill.BorderSizePixel = 0
     fill.Parent = tr
-    Instance.new("UICorner", fill).CornerRadius = UDim.new(1, 0)
+    local _uicorner = Instance.new("UICorner")
+    _uicorner.CornerRadius = UDim.new(1, 0)
+    _uicorner.Parent = fill
 
     local dragging = false
     local function commit(v)
@@ -533,7 +561,9 @@ local function button(parent, label, cb)
     b.TextColor3 = Color3.fromRGB(226, 232, 240)
     b.Text = label
     b.Parent = parent
-    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 6)
+    local _uicorner = Instance.new("UICorner")
+    _uicorner.CornerRadius = UDim.new(0, 6)
+    _uicorner.Parent = b
     b.MouseButton1Click:Connect(cb)
 end
 
@@ -548,8 +578,12 @@ local function notify(text)
     t.TextColor3 = Color3.fromRGB(226, 232, 240)
     t.Text = text
     t.Parent = gui
-    Instance.new("UICorner", t).CornerRadius = UDim.new(0, 6)
-    local s = Instance.new("UIStroke", t) s.Color = Color3.fromRGB(56, 189, 248)
+    local _uicorner = Instance.new("UICorner")
+    _uicorner.CornerRadius = UDim.new(0, 6)
+    _uicorner.Parent = t
+    local s = Instance.new("UIStroke")
+    s.Color = Color3.fromRGB(56, 189, 248)
+    s.Parent = t
     task.delay(3, function() t:Destroy() end)
 end
 
